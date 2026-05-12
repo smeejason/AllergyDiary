@@ -64,8 +64,10 @@ Not yet built (planned phases):
 - `npm run start` — run the production build
 - `npm run lint` — ESLint
 
-## Notes on auth and RLS
+## Notes on auth
 
-Phase 1 has no auth. The API route uses the service-role key server-side
-and RLS is disabled on `entries`. Don't expose this deployment publicly
-until Session 2 lands Entra ID + RLS.
+There is no authentication. The deployed URL is unguessable
+(`<random>.azurestaticapps.net`) and that's the only protection. Every
+entry is owned by a hardcoded `user_id = "owner"`. If multi-user is
+ever needed, swap `src/lib/auth.ts` for a real principal source and
+backfill existing rows.
