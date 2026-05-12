@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   EMPTY_SYMPTOMS,
   MEDICATIONS,
@@ -54,22 +54,15 @@ export function LogEntryForm() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [location, setLocation] = useState<LocationState>({ kind: "pending" });
 
-  useEffect(() => {
-    let cancelled = false;
-    const update = (s: LocationState) => {
-      if (!cancelled) setLocation(s);
-    };
-
+  const requestLocation = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
-      void Promise.resolve().then(() => update({ kind: "unsupported" }));
-      return () => {
-        cancelled = true;
-      };
+      setLocation({ kind: "unsupported" });
+      return;
     }
-
+    setLocation({ kind: "pending" });
     navigator.geolocation.getCurrentPosition(
       (pos) =>
-        update({
+        setLocation({
           kind: "ready",
           coord: {
             latitude: pos.coords.latitude,
@@ -78,18 +71,18 @@ export function LogEntryForm() {
           },
         }),
       (err) =>
-        update(
+        setLocation(
           err.code === err.PERMISSION_DENIED
             ? { kind: "denied" }
             : { kind: "error", message: err.message }
         ),
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+      { enableHighAccuracy: false, timeout: 30000, maximumAge: 5 * 60 * 1000 }
     );
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(requestLocation);
+  }, [requestLocation]);
 
   function setSymptom(key: SymptomKey, value: number) {
     setSymptoms((s) => ({ ...s, [key]: value }));
@@ -242,7 +235,7 @@ export function LogEntryForm() {
         />
       </section>
 
-      <LocationStatus state={location} />
+      <LocationStatus state={location} onRetry={requestLocation} />
 
       <div className="flex flex-col gap-3">
         <button
@@ -263,9 +256,16 @@ export function LogEntryForm() {
   );
 }
 
-function LocationStatus({ state }: { state: LocationState }) {
+function LocationStatus({
+  state,
+  onRetry,
+}: {
+  state: LocationState;
+  onRetry: () => void;
+}) {
   let label = "";
   let tone = "text-zinc-500 dark:text-zinc-400";
+  let canRetry = false;
   switch (state.kind) {
     case "pending":
       label = "Locating you so we can pull weather and pollen…";
@@ -276,8 +276,9 @@ function LocationStatus({ state }: { state: LocationState }) {
       break;
     case "denied":
       label =
-        "Location blocked. The entry will still save but without weather or pollen.";
+        "Location blocked in your browser. Re-allow it in site settings, then retry.";
       tone = "text-amber-600 dark:text-amber-400";
+      canRetry = true;
       break;
     case "unsupported":
       label =
@@ -285,11 +286,25 @@ function LocationStatus({ state }: { state: LocationState }) {
       tone = "text-amber-600 dark:text-amber-400";
       break;
     case "error":
-      label = `Couldn't read location (${state.message}). Saving without weather or pollen.`;
+      label = `Couldn't read location (${state.message}). You can still save without conditions, or retry.`;
       tone = "text-amber-600 dark:text-amber-400";
+      canRetry = true;
       break;
   }
-  return <p className={`text-xs ${tone}`}>{label}</p>;
+  return (
+    <p className={`flex flex-wrap items-center gap-2 text-xs ${tone}`}>
+      <span>{label}</span>
+      {canRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="rounded-full border border-current px-2 py-0.5 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-900"
+        >
+          Retry
+        </button>
+      )}
+    </p>
+  );
 }
 
 function SavedSummary({ snapshot }: { snapshot: EnvSnapshot | null }) {
