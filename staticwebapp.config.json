@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json.schemastore.org/staticwebapp.config.json",
+  "trailingSlash": "auto",
+  "routes": [
+    {
+      "route": "/login",
+      "redirect": "/.auth/login/aadcustom",
+      "statusCode": 302
+    },
+    {
+      "route": "/logout",
+      "redirect": "/.auth/logout",
+      "statusCode": 302
+    },
+    {
+      "route": "/api/entries*",
+      "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/",
+      "allowedRoles": ["authenticated"]
+    }
+  ],
+  "responseOverrides": {
+    "401": {
+      "redirect": "/.auth/login/aadcustom",
+      "statusCode": 302
+    }
+  },
+  "auth": {
+    "identityProviders": {
+      "customOpenIdConnectProviders": {
+        "aadcustom": {
+          "registration": {
+            "clientIdSettingName": "AAD_CLIENT_ID",
+            "clientCredential": {
+              "clientSecretSettingName": "AAD_CLIENT_SECRET"
+            },
+            "openIdConnectConfiguration": {
+              "wellKnownOpenIdConfiguration": "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
+            }
+          },
+          "login": {
+            "nameClaimType": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name",
+            "scopes": ["openid", "profile", "email"]
+          }
+        }
+      }
+    }
+  }
+}

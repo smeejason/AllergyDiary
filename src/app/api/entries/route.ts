@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getPrincipal } from "@/lib/auth";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { EMPTY_SYMPTOMS, SYMPTOM_FIELDS, type Symptoms } from "@/lib/symptoms";
 
@@ -25,6 +26,8 @@ function normaliseSymptoms(input: Partial<Symptoms> | undefined): Symptoms {
 }
 
 export async function POST(req: Request) {
+  const principal = await getPrincipal();
+
   let body: EntryPayload;
   try {
     body = (await req.json()) as EntryPayload;
@@ -41,6 +44,7 @@ export async function POST(req: Request) {
   }
 
   const row = {
+    user_id: principal.userId,
     overall_score: score,
     symptoms: normaliseSymptoms(body.symptoms),
     notes: body.notes?.trim() || null,
@@ -64,10 +68,12 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
+  const principal = await getPrincipal();
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
     .from("entries")
     .select("*")
+    .eq("user_id", principal.userId)
     .order("created_at", { ascending: false })
     .limit(50);
 

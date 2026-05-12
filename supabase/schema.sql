@@ -6,7 +6,7 @@ create extension if not exists "uuid-ossp";
 
 create table if not exists entries (
   id uuid primary key default uuid_generate_v4(),
-  user_id uuid,
+  user_id text,
   created_at timestamptz not null default now(),
   entry_date date not null default current_date,
   overall_score int not null check (overall_score between 1 and 5),
