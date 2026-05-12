@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   EMPTY_SYMPTOMS,
   MEDICATIONS,
@@ -12,10 +12,38 @@ import {
 const SCORE_LABELS = ["", "Awful", "Bad", "OK", "Good", "Great"];
 const SEVERITY_LABELS = ["None", "Mild", "Moderate", "Severe"];
 
+type Coord = { latitude: number; longitude: number; accuracy_m?: number };
+
+type LocationState =
+  | { kind: "pending" }
+  | { kind: "ready"; coord: Coord }
+  | { kind: "denied" }
+  | { kind: "unsupported" }
+  | { kind: "error"; message: string };
+
+type WeatherSnap = {
+  temperature_c: number | null;
+  humidity_pct: number | null;
+  wind_kph: number | null;
+  precipitation_mm: number | null;
+};
+type PollenSnap = {
+  alder: number | null;
+  birch: number | null;
+  grass: number | null;
+  mugwort: number | null;
+  olive: number | null;
+  ragweed: number | null;
+};
+type EnvSnapshot = {
+  weather: WeatherSnap | null;
+  pollen: PollenSnap | null;
+};
+
 type Status =
   | { kind: "idle" }
   | { kind: "saving" }
-  | { kind: "saved" }
+  | { kind: "saved"; snapshot: EnvSnapshot | null }
   | { kind: "error"; message: string };
 
 export function LogEntryForm() {
@@ -24,6 +52,44 @@ export function LogEntryForm() {
   const [meds, setMeds] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [location, setLocation] = useState<LocationState>({ kind: "pending" });
+
+  useEffect(() => {
+    let cancelled = false;
+    const update = (s: LocationState) => {
+      if (!cancelled) setLocation(s);
+    };
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      void Promise.resolve().then(() => update({ kind: "unsupported" }));
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        update({
+          kind: "ready",
+          coord: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy_m: pos.coords.accuracy,
+          },
+        }),
+      (err) =>
+        update(
+          err.code === err.PERMISSION_DENIED
+            ? { kind: "denied" }
+            : { kind: "error", message: err.message }
+        ),
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function setSymptom(key: SymptomKey, value: number) {
     setSymptoms((s) => ({ ...s, [key]: value }));
@@ -41,6 +107,7 @@ export function LogEntryForm() {
     e.preventDefault();
     setStatus({ kind: "saving" });
     try {
+      const coord = location.kind === "ready" ? location.coord : null;
       const res = await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -49,13 +116,26 @@ export function LogEntryForm() {
           symptoms,
           medications_taken: meds,
           notes,
+          ...(coord
+            ? {
+                latitude: coord.latitude,
+                longitude: coord.longitude,
+                accuracy_m: coord.accuracy_m,
+              }
+            : {}),
         }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(data.error || `Request failed (${res.status})`);
       }
-      setStatus({ kind: "saved" });
+      const data = (await res.json()) as {
+        entry?: { environmental_snapshot?: EnvSnapshot | null };
+      };
+      setStatus({
+        kind: "saved",
+        snapshot: data.entry?.environmental_snapshot ?? null,
+      });
       setSymptoms({ ...EMPTY_SYMPTOMS });
       setMeds([]);
       setNotes("");
@@ -162,6 +242,8 @@ export function LogEntryForm() {
         />
       </section>
 
+      <LocationStatus state={location} />
+
       <div className="flex flex-col gap-3">
         <button
           type="submit"
@@ -170,11 +252,7 @@ export function LogEntryForm() {
         >
           {status.kind === "saving" ? "Saving…" : "Save entry"}
         </button>
-        {status.kind === "saved" && (
-          <p className="text-sm text-green-600 dark:text-green-400">
-            Saved. Logged for today.
-          </p>
-        )}
+        {status.kind === "saved" && <SavedSummary snapshot={status.snapshot} />}
         {status.kind === "error" && (
           <p className="text-sm text-red-600 dark:text-red-400">
             {status.message}
@@ -182,5 +260,61 @@ export function LogEntryForm() {
         )}
       </div>
     </form>
+  );
+}
+
+function LocationStatus({ state }: { state: LocationState }) {
+  let label = "";
+  let tone = "text-zinc-500 dark:text-zinc-400";
+  switch (state.kind) {
+    case "pending":
+      label = "Locating you so we can pull weather and pollen…";
+      break;
+    case "ready":
+      label = `Location ready (±${Math.round(state.coord.accuracy_m ?? 0)} m). Weather and pollen will be saved with this entry.`;
+      tone = "text-zinc-600 dark:text-zinc-300";
+      break;
+    case "denied":
+      label =
+        "Location blocked. The entry will still save but without weather or pollen.";
+      tone = "text-amber-600 dark:text-amber-400";
+      break;
+    case "unsupported":
+      label =
+        "This device can't share location, so weather and pollen will be skipped.";
+      tone = "text-amber-600 dark:text-amber-400";
+      break;
+    case "error":
+      label = `Couldn't read location (${state.message}). Saving without weather or pollen.`;
+      tone = "text-amber-600 dark:text-amber-400";
+      break;
+  }
+  return <p className={`text-xs ${tone}`}>{label}</p>;
+}
+
+function SavedSummary({ snapshot }: { snapshot: EnvSnapshot | null }) {
+  if (!snapshot || (!snapshot.weather && !snapshot.pollen)) {
+    return (
+      <p className="text-sm text-green-600 dark:text-green-400">
+        Saved. Logged for today.
+      </p>
+    );
+  }
+  const w = snapshot.weather;
+  const p = snapshot.pollen;
+  const parts: string[] = [];
+  if (w?.temperature_c != null) parts.push(`${w.temperature_c.toFixed(1)}°C`);
+  if (w?.humidity_pct != null) parts.push(`${Math.round(w.humidity_pct)}% humidity`);
+  if (w?.wind_kph != null) parts.push(`${Math.round(w.wind_kph)} km/h wind`);
+  if (w?.precipitation_mm != null && w.precipitation_mm > 0)
+    parts.push(`${w.precipitation_mm.toFixed(1)} mm rain`);
+  if (p?.grass != null) parts.push(`grass pollen ${p.grass.toFixed(1)}`);
+  return (
+    <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+      <p className="font-medium">Saved.</p>
+      {parts.length > 0 && (
+        <p className="mt-1 text-xs">Conditions logged: {parts.join(" · ")}</p>
+      )}
+    </div>
   );
 }

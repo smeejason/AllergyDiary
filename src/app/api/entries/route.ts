@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPrincipal } from "@/lib/auth";
+import { getConditions, type Coord } from "@/lib/conditions";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { EMPTY_SYMPTOMS, SYMPTOM_FIELDS, type Symptoms } from "@/lib/symptoms";
 
@@ -11,6 +12,9 @@ type EntryPayload = {
   notes?: string;
   medications_taken?: string[];
   entry_date?: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy_m?: number;
 };
 
 function normaliseSymptoms(input: Partial<Symptoms> | undefined): Symptoms {
@@ -23,6 +27,19 @@ function normaliseSymptoms(input: Partial<Symptoms> | undefined): Symptoms {
     }
   }
   return out;
+}
+
+function parseLocation(body: EntryPayload): Coord | null {
+  const lat = Number(body.latitude);
+  const lon = Number(body.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  const acc = Number(body.accuracy_m);
+  return {
+    latitude: lat,
+    longitude: lon,
+    ...(Number.isFinite(acc) ? { accuracy_m: acc } : {}),
+  };
 }
 
 export async function POST(req: Request) {
@@ -43,6 +60,9 @@ export async function POST(req: Request) {
     );
   }
 
+  const location = parseLocation(body);
+  const snapshot = location ? await getConditions(location) : null;
+
   const row = {
     user_id: principal.userId,
     overall_score: score,
@@ -51,6 +71,7 @@ export async function POST(req: Request) {
     medications_taken: Array.isArray(body.medications_taken)
       ? body.medications_taken.filter((m) => typeof m === "string")
       : [],
+    environmental_snapshot: snapshot,
     entry_date: body.entry_date || undefined,
   };
 
